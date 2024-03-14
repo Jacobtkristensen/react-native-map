@@ -1,8 +1,12 @@
-import { StatusBar } from "expo-status-bar";
-import { StyleSheet, Text, View } from "react-native";
-import MapView, {Marker} from "react-native-maps";
+import { addDoc, collection, doc } from "firebase/firestore";
+import { StyleSheet, View } from "react-native";
+import MapView, { Marker } from "react-native-maps";
 import { useEffect, useState, useRef } from "react";
 import * as Location from 'expo-location';
+import * as ImagePicker from 'expo-image-picker';
+import { ref, uploadBytes } from 'firebase/storage';
+import { database, storage } from './firebase.js';
+
 export default function App() {
 
   const [markers, setMarkers] = useState([]);
@@ -48,7 +52,7 @@ export default function App() {
     }
   }, []); // tom array betyder: kører kun en gang
 
-  function addMarker(data) {
+  async function addMarker(data) {
     const {latitude, longitude} = data.nativeEvent.coordinate;
     const newMarker = {
       coordinate: { latitude, longitude },
@@ -56,7 +60,42 @@ export default function App() {
       title: "Good place",
     };
     setMarkers([...markers, newMarker]);
+
+
+    // open camera roll
+    let result = await ImagePicker.launchImageLibraryAsync({
+      allowsEditing: true,
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+    });
+
+
+    // upload to firebase storage
+    const res = await fetch(result.assets ? result.assets[0].uri : result.uri);
+    const blob = await res.blob();
+
+    const uniqueFileName = `image_${new Date().getTime()}.jpg`
+
+    const storageRef = ref(storage, uniqueFileName);
+    await uploadBytes(storageRef, blob).then((snapshot) => {
+      console.log('Uploaded a blob!');
+    });
+    
+    const markerDocument = {
+      title: newMarker.title,
+      latitude: newMarker.coordinate.latitude,
+      longitude: newMarker.coordinate.longitude,
+      imageId: uniqueFileName,
+    };
+
+    try {
+      await addDoc(collection(database, "Map_Location"), {content: markerDocument});
+    } catch(error) {
+      console.error("Error adding marker document: ", error);
+    }
+
+
   }
+
 
   function onMarkerPressed(text) {
     alert("You pressed " + text);
