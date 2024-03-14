@@ -1,14 +1,15 @@
-import { addDoc, collection, doc } from "firebase/firestore";
-import { StyleSheet, View } from "react-native";
+import { addDoc, collection, getDocs  } from "firebase/firestore";
+import { StyleSheet, View, Modal, Image, TouchableOpacity, Text } from "react-native";
 import MapView, { Marker } from "react-native-maps";
 import { useEffect, useState, useRef } from "react";
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
-import { ref, uploadBytes } from 'firebase/storage';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { database, storage } from './firebase.js';
 
 export default function App() {
-
+  const [selectedImage, setSelectedImage] = useState(null);
+  const [modalVisible, setModalVisible] = useState(false);
   const [markers, setMarkers] = useState([]);
   const [region, setRegion] = useState({
     latitude: 55,
@@ -21,7 +22,20 @@ export default function App() {
   const locationSubscription = useRef(null);
 
   useEffect(() => {
-    // starte en listener
+    async function fetchMarkers() {
+      const querySnapshot = await getDocs(collection(database, "Map_Location"));
+      const fetchedMarkers = querySnapshot.docs.map(doc => {
+        let data = doc.data().content; 
+        return {
+          coordinate: { latitude: data.latitude, longitude: data.longitude },
+          title: data.title || "Untitled",
+          key: doc.id,// Firestore Id som unik identifier
+          imageId : data.imageId ||  "defaultId", // Hvis der ikke er noget billede, så brug defaultId
+        };
+      });
+      setMarkers(currentMarkers => [...currentMarkers, ...fetchedMarkers]);
+    }
+
     async function startListening(){
       let {status} = await Location.requestForegroundPermissionsAsync();
       if(status !== 'granted'){
@@ -44,7 +58,8 @@ export default function App() {
         }
       });
     }
-    startListening()
+    fetchMarkers();
+    startListening();
     return () => {
       if(locationSubscription.current){
         locationSubscription.current.remove();
@@ -54,14 +69,7 @@ export default function App() {
 
   async function addMarker(data) {
     const {latitude, longitude} = data.nativeEvent.coordinate;
-    const newMarker = {
-      coordinate: { latitude, longitude },
-      key: data.timeStamp,
-      title: "Good place",
-    };
-    setMarkers([...markers, newMarker]);
-
-
+    
     // open camera roll
     let result = await ImagePicker.launchImageLibraryAsync({
       allowsEditing: true,
@@ -81,25 +89,37 @@ export default function App() {
     });
     
     const markerDocument = {
-      title: newMarker.title,
-      latitude: newMarker.coordinate.latitude,
-      longitude: newMarker.coordinate.longitude,
+      title: "Good place",
+      latitude,
+      longitude,
       imageId: uniqueFileName,
     };
 
     try {
-      await addDoc(collection(database, "Map_Location"), {content: markerDocument});
+      docRef = await addDoc(collection(database, "Map_Location"),
+       {content: markerDocument});
     } catch(error) {
       console.error("Error adding marker document: ", error);
     }
 
-
+    const newMarker = {
+      coordinate: { latitude, longitude },
+      key: docRef.id,
+      title: "Good place",
+      imageId: uniqueFileName,
+    };
+    setMarkers(currentMarkers => [...currentMarkers, newMarker]);
+    console.log("newMarker: ", newMarker);
   }
 
-
-  function onMarkerPressed(text) {
-    alert("You pressed " + text);
+  async function onMarkerPress(imageId) {
+    console.log("imageID :", imageId)
+    const imageRef = ref(storage, imageId);
+    const imageUrl = await getDownloadURL(imageRef);
+    setSelectedImage(imageUrl);
+    setModalVisible(true);
   }
+
   return (
     <View style={styles.container}>
       <MapView 
@@ -113,10 +133,31 @@ export default function App() {
           coordinate={marker.coordinate}
           key={marker.key}
           title={marker.title}
-          onPress={() => onMarkerPressed(marker.title)}
+          imageId={marker.imageId}
+          onPress={() => onMarkerPress(marker.imageId)}
           />
         ))}
       </MapView>
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={modalVisible}
+        onRequestClose={() => {
+          setModalVisible(!modalVisible);
+        }}>
+        <View style={styles.centeredView}>
+          <View style={styles.modalView}>
+            {selectedImage && (
+              <Image source={{ uri: selectedImage }} style={styles.imageStyle} /> 
+            )}
+            <TouchableOpacity
+              style={styles.button}
+              onPress={() => setModalVisible(!modalVisible)}>
+              <Text>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -125,5 +166,36 @@ const styles = StyleSheet.create({
   map: {
     width: "100%",
     height: "100%",
+  },
+  centeredView: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 22,
+  },
+  modalView: {
+    margin: 20,
+    backgroundColor: 'white',
+    borderRadius: 20,
+    padding: 35,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  imageStyle: {
+    width: 300, 
+    height: 300, 
+  },
+  button: {
+    marginTop: 15,
+    backgroundColor: "#2196F3",
+    padding: 10,
+    borderRadius: 20,
   },
 });
